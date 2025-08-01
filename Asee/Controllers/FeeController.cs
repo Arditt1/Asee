@@ -13,31 +13,79 @@ namespace Asee.Controllers
     {
         private readonly FeeCalculator _calculator;
         private readonly FeeHistoryService _history;
+        private readonly FeeRuleService _feeRuleService;
 
-        public FeeController(FeeCalculator calculator, FeeHistoryService history)
+        public FeeController(FeeCalculator calculator, FeeHistoryService history, FeeRuleService feeRuleService)
         {
             _calculator = calculator;
             _history = history;
+            _feeRuleService = feeRuleService;
         }
 
-        //[HttpGet("ping")]
-        //public IActionResult Ping()
-        //{
-        //    return Ok("API is reachable");
-        //}
+        [HttpGet("ping")]
+        public IActionResult Ping()
+        {
+            return Ok("API is reachable");
+        }
 
         /// <summary>
         /// Calculate fee for a single transaction
         /// </summary>
+        //[HttpPost("calculate")]
+        //public async Task<ActionResult<FeeResponse>> Calculate([FromBody] TransactionRequest request)
+        //{
+        //    var context = Mapper.ToDomain(request);
+        //    var result = _calculator.Calculate(context);
+        //    var response = Mapper.ToResponse(result);
+
+        //    await _history.SaveAsync(request, response, request.TransactionId);
+        //    return Ok(response);
+        //}
+
         [HttpPost("calculate")]
         public async Task<ActionResult<FeeResponse>> Calculate([FromBody] TransactionRequest request)
         {
             var context = Mapper.ToDomain(request);
+
             var result = _calculator.Calculate(context);
+
             var response = Mapper.ToResponse(result);
 
             await _history.SaveAsync(request, response, request.TransactionId);
+
             return Ok(response);
+        }
+
+        [HttpPost("batch")]
+        public async Task<ActionResult<List<FeeResponse>>> CalculateBatch([FromBody] List<TransactionRequest> requests)
+        {
+            var responses = new List<FeeResponse>();
+
+            var activeRules = await _feeRuleService.GetActiveRulesAsync();
+
+            if (activeRules == null || activeRules.Count == 0)
+            {
+                return NotFound("No active rules found.");
+            }
+
+            var tasks = requests.Select(async request =>
+            {
+                var context = Mapper.ToDomain(request);
+
+                var filteredRules = activeRules.Where(rule => rule.RuleType == request.Type || rule.RuleType == "CreditScoreDiscount").ToList();
+
+                var result = _calculator.Calculate(context);
+
+                var response = Mapper.ToResponse(result);
+
+                await _history.SaveAsync(request, response, request.TransactionId);
+
+                return response;
+            }).ToList();
+
+            responses = (await Task.WhenAll(tasks)).ToList();
+
+            return Ok(responses.OrderBy(r => r.TransactionId).ToList());
         }
 
         /// <summary>
@@ -64,38 +112,59 @@ namespace Asee.Controllers
         //    return Ok(responses.OrderBy(r => r.TransactionId).ToList());
         //}
 
-        [HttpPost("batch")]
-        public async Task<ActionResult<List<FeeResponse>>> CalculateBatch([FromBody] List<TransactionRequest> requests)
-        {
-            const int maxDegreeOfConcurrency = 100; // Maximum number of concurrent tasks
-            var semaphore = new SemaphoreSlim(maxDegreeOfConcurrency);
+        //[HttpPost("batch")]
+        //public async Task<ActionResult<List<FeeResponse>>> CalculateBatch([FromBody] List<TransactionRequest> requests)
+        //{
+        //    const int maxDegreeOfConcurrency = 100; // Maximum number of concurrent tasks
+        //    var semaphore = new SemaphoreSlim(maxDegreeOfConcurrency);
 
-            // Create a list to hold the Task<FeeResponse> objects
-            var tasks = requests.Select(async request =>
-            {
-                await semaphore.WaitAsync(); // Acquire the semaphore
+        //    var tasks = requests.Select(async request =>
+        //    {
+        //        await semaphore.WaitAsync(); // Acquire the semaphore to limit concurrency
 
-                try
-                {
-                    var context = Mapper.ToDomain(request);
-                    var result = _calculator.Calculate(context);
-                    var response = Mapper.ToResponse(result);
+        //        try
+        //        {
+        //            // Fetch the fee rule dynamically from the database based on the rule type (e.g., "POS")
+        //            var feeRule = await _feeRuleService.GetRulesByTypeAsync(request.Type); // Assuming `Type` is part of the request
 
-                    await _history.SaveAsync(request, response, request.TransactionId);
-                    return response;
-                }
-                finally
-                {
-                    semaphore.Release(); // Release the semaphore
-                }
-            }).ToList();
+        //            if (feeRule == null)
+        //            {
+        //                // If no rule found for the given Type, return an appropriate response
+        //                return new FeeResponse
+        //                {
+        //                    TransactionId = request.TransactionId,
+        //                    CalculatedFee = 0,
+        //                    TotalAmountWithFee = request.Amount,
+        //                    AppliedRules = new List<AppliedRuleDto> { new AppliedRuleDto { RuleId = "NoRule", Description = "No matching rule found", FeeComponent = 0 } }
+        //                };
+        //            }
 
-            // Await all tasks to complete, ensure we use Task.WhenAll on the Task<FeeResponse> list
-            var responses = await Task.WhenAll(tasks);
+        //            // Convert TransactionRequest to TransactionContext
+        //            var context = Mapper.ToDomain(request);
 
-            // Convert the responses to a List and return
-            return Ok(responses.OrderBy(r => r.TransactionId).ToList());
-        }
+        //            // Calculate the fee using the dynamic rule fetched from the database
+        //            var result = _calculator.Calculate(context, feeRule);
+
+        //            // Map the result to FeeResponse
+        //            var response = Mapper.ToResponse(result);
+
+        //            // Save the fee calculation history
+        //            await _history.SaveAsync(request, response, request.TransactionId);
+
+        //            return response;
+        //        }
+        //        finally
+        //        {
+        //            semaphore.Release(); // Release the semaphore
+        //        }
+        //    }).ToList();
+
+        //    // Wait for all tasks to complete and return the responses
+        //    var responses = await Task.WhenAll(tasks);
+
+        //    // Convert the responses to a List and order by TransactionId
+        //    return Ok(responses.OrderBy(r => r.TransactionId).ToList());
+        //}
 
 
         /// <summary>

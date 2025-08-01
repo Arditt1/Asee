@@ -16,11 +16,7 @@ builder.Services.AddDbContext<FeeDbContext>(options =>
 
 builder.Services.AddScoped<FeeCalculator>();
 builder.Services.AddScoped<FeeHistoryService>();
-
-
-builder.Services.AddScoped<IFeeRule, PosFixedRule>();
-builder.Services.AddScoped<IFeeRule, ECommerceCapRule>();
-builder.Services.AddScoped<IFeeRule, CreditScoreDiscountRule>();
+builder.Services.AddScoped<FeeRuleService>();
 
 // Before `builder.Build();`
 builder.Services.AddEndpointsApiExplorer();
@@ -37,6 +33,7 @@ var app = builder.Build();
     app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
+app.MapControllers();
 app.UseRouting();
 
 app.UseAuthorization();
